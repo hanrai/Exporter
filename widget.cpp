@@ -33,9 +33,9 @@ void Widget::on_targetButton_clicked()
     QString filename = QFileDialog::getExistingDirectory(
                 this,
                 tr("Target Folder"),
-            "E:/",
-            QFileDialog::ShowDirsOnly|
-            QFileDialog::DontResolveSymlinks);
+                "E:/",
+                QFileDialog::ShowDirsOnly|
+                QFileDialog::DontResolveSymlinks);
 
     if(filename.isEmpty())
         return;
