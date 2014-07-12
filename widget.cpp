@@ -30,12 +30,11 @@ void Widget::on_dataFileButton_clicked()
 
 void Widget::on_targetButton_clicked()
 {
-    QString filename = QFileDialog::getExistingDirectory(
+    QString filename = QFileDialog::getSaveFileName(
                 this,
-                tr("Target Folder"),
-                "E:/",
-                QFileDialog::ShowDirsOnly|
-                QFileDialog::DontResolveSymlinks);
+                tr("Export to..."),
+                "E:/Data",
+                tr("SQLite (*.sqlite)"));
 
     if(filename.isEmpty())
         return;
