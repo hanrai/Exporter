@@ -52,6 +52,7 @@ QString decode(QByteArray &data)
     quint32 blocks = ntohl(*(quint32*)cursor);
     cursor+=4;
 
+
     quint32 datetime1 = *(quint32*)cursor;
     cursor+=4;
     quint32 datetime2 = *(quint32*)cursor;
