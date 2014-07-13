@@ -42,10 +42,14 @@ void Widget::on_targetButton_clicked()
     ui->targetFolder->setText(filename);
 }
 
-QString decode(QByteArray &data)
+void decode(QByteArray &data, QSqlQuery &query, QString &table, int subId, int t_time,
+            QString &product, QString &market)
 {
+    query.exec("CREATE TABLE IF NOT EXISTS [" + table + "]"
+               "(market TEXT, product TEXT, "
+               "subId INTEGER, timestamp INTEGER, data REAL)");
     if(data.size()<=17)
-        return QString();
+        return;
     quint8* cursor = (quint8*)data.data();
     cursor++;
     quint32 blocks = ntohl(*(quint32*)cursor);
@@ -60,37 +64,28 @@ QString decode(QByteArray &data)
     cursor+=4;
 
     if(!count)
-        return QString();
+        return;
 
-    //cursor+=0x19;
-    QString result;
+    query.prepare("INSERT INTO [" + table + "] VALUES "
+                  "(:market, :product, :subId, :timestamp, :data)");
     for(int i=0;i<count;i++)
     {
-        quint32 ttime;
-        quint8 *pttime = (quint8*)&ttime;
-        pttime[0]=cursor[3];
-        pttime[1]=cursor[2];
-        pttime[2]=cursor[1];
-        pttime[3]=cursor[0];
-        auto time = QDateTime::fromTime_t(ttime);
-        auto timePart = time.toLocalTime().toString("yyyy-MM-dd hh:mm:ss");
-        result += timePart+",";
+        quint32 ttime = ntohl(*(int*)cursor);
         cursor+=4;
         double doubleValue;
-        quint8 *pvalue=(quint8*)&doubleValue;
-        pvalue[0]=cursor[3];
-        pvalue[1]=cursor[2];
-        pvalue[2]=cursor[1];
-        pvalue[3]=cursor[0];
-        pvalue[4]=cursor[7];
-        pvalue[5]=cursor[6];
-        pvalue[6]=cursor[5];
-        pvalue[7]=cursor[4];
-
-        result += QString::number(doubleValue,'f',6)+"\n";
-        cursor += 8;
+        quint32 *pvalue=(quint32*)&doubleValue;
+        *pvalue = ntohl(*(int*)cursor);
+        cursor+=4;
+        pvalue++;
+        *pvalue = ntohl(*(int*)cursor);
+        cursor+=4;
+        query.bindValue(":market", market);
+        query.bindValue(":product", product);
+        query.bindValue(":subId", subId);
+        query.bindValue(":timestamp", ttime);
+        query.bindValue(":data", doubleValue);
+        query.exec();
     }
-    return result;
 }
 
 QString decode2(QByteArray &data)
@@ -148,98 +143,87 @@ void Widget::on_startButton_clicked()
     if(ui->targetFolder->text().isEmpty())
         return;
 
-    QSqlDatabase database = QSqlDatabase::addDatabase("QSQLITE");
+    QSqlDatabase database = QSqlDatabase::addDatabase("QSQLITE", "src");
     database.setDatabaseName(ui->dataFile->text());
     if(!database.open())
     {
         database.close();
         return;
     }
+    QSqlDatabase destDatabase = QSqlDatabase::addDatabase("QSQLITE", "dest");
+    destDatabase.setDatabaseName(ui->targetFolder->text());
+    if(!destDatabase.open())
+    {
+        destDatabase.close();
+        return;
+    }
 
-    QSqlQuery query;
+    QSqlQuery query(database);
     query.exec("SELECT * FROM t_stockly_double");
+    QSqlQuery destQuery(destDatabase);
+    destQuery.exec("BEGIN TRANSACTION");
 
     while(query.next())
     {
         auto name = query.value(0).toString();
-        auto value = query.value(1).toByteArray();
         auto nameList = name.split("-");
+        auto value = query.value(1).toByteArray();
         Q_ASSERT(nameList.size()==5);
 
+        QString market = nameList.at(0).toLocal8Bit();
+        QString product = nameList.at(1).toLocal8Bit();
+        QString table = nameList.at(2).toLocal8Bit();
+        auto subTable = nameList.at(3).toInt();
         auto ttime = nameList.at(4).toInt();
-        auto time = QDateTime::fromTime_t(ttime);
-        auto timePart = time.toLocalTime().toString("yyyyMMdd");
-        QString filename =
-                ui->targetFolder->text()+"/"+
-                timePart+"-"+
-                nameList.at(1)+"-"+
-                nameList.at(2)+"-"+
-                nameList.at(3)+".csv";
-        QFile file(filename);
-        if(file.exists())
-            continue;
 
-        auto decoded = decode(value);
+        decode(value, destQuery, table, subTable, ttime, product, market);
 
-        if(decoded.isEmpty())
-            continue;
-
-        bool success;
-        success=file.open(QIODevice::WriteOnly|QIODevice::Text);
-        if(!success)
-        {
-            QString reason = file.errorString();
-            ui->msg->append(reason);
-            ui->msg->append(filename);
-            return;
-        }
-        file.write(decoded.toLocal8Bit());
-        file.close();
-        ui->msg->append(filename);
+        ui->msg->append(name);
         qApp->processEvents();
     }
+    destQuery.exec("COMMIT TRANSACTION");
 
-    query.exec("SELECT * FROM t_stockly_vdouble");
+//    query.exec("SELECT * FROM t_stockly_vdouble");
 
-    while(query.next())
-    {
-        auto name = query.value(0).toString();
-        auto value = query.value(1).toByteArray();
-        auto nameList = name.split("-");
-        Q_ASSERT(nameList.size()==5);
+//    while(query.next())
+//    {
+//        auto name = query.value(0).toString();
+//        auto value = query.value(1).toByteArray();
+//        auto nameList = name.split("-");
+//        Q_ASSERT(nameList.size()==5);
 
-        auto ttime = nameList.at(4).toInt();
-        auto time = QDateTime::fromTime_t(ttime);
-        auto timePart = time.toLocalTime().toString("yyyyMMdd");
-        QString filename =
-                ui->targetFolder->text()+"/"+
-                timePart+"-"+
-                nameList.at(1)+"-"+
-                nameList.at(2)+"-"+
-                nameList.at(3)+".csv";
-        QFile file(filename);
-        if(file.exists())
-            continue;
+//        auto ttime = nameList.at(4).toInt();
+//        auto time = QDateTime::fromTime_t(ttime);
+//        auto timePart = time.toLocalTime().toString("yyyyMMdd");
+//        QString filename =
+//                ui->targetFolder->text()+"/"+
+//                timePart+"-"+
+//                nameList.at(1)+"-"+
+//                nameList.at(2)+"-"+
+//                nameList.at(3)+".csv";
+//        QFile file(filename);
+//        if(file.exists())
+//            continue;
 
-        auto decoded = decode2(value);
+//        auto decoded = decode2(value);
 
-        if(decoded.isEmpty())
-            continue;
+//        if(decoded.isEmpty())
+//            continue;
 
-        bool success;
-        success=file.open(QIODevice::WriteOnly|QIODevice::Text);
-        if(!success)
-        {
-            QString reason = file.errorString();
-            ui->msg->append(reason);
-            ui->msg->append(filename);
-            return;
-        }
-        file.write(decoded.toLocal8Bit());
-        file.close();
-        ui->msg->append(filename);
-        qApp->processEvents();
-    }
+//        bool success;
+//        success=file.open(QIODevice::WriteOnly|QIODevice::Text);
+//        if(!success)
+//        {
+//            QString reason = file.errorString();
+//            ui->msg->append(reason);
+//            ui->msg->append(filename);
+//            return;
+//        }
+//        file.write(decoded.toLocal8Bit());
+//        file.close();
+//        ui->msg->append(filename);
+//        qApp->processEvents();
+//    }
     qDebug()<<"Done!";
     ui->msg->append("Done!");
 }
