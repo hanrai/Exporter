@@ -42,12 +42,35 @@ void Widget::on_targetButton_clicked()
     ui->targetFolder->setText(filename);
 }
 
-void decode(QByteArray &data, QSqlQuery &query, QString &table, int subId, int t_time,
-            QString &product, QString &market)
+void decode(QByteArray &data,
+            QSqlQuery &query,
+            QString &market,
+            QString &product,
+            QString &table,
+            QString &subTable,
+            int timestamp)
 {
-    query.exec("CREATE TABLE IF NOT EXISTS [" + table + "]"
-               "(market TEXT, product TEXT, "
-               "subId INTEGER, timestamp INTEGER, data REAL)");
+    query.exec("CREATE TABLE IF NOT EXISTS [t_" + table + "]"
+               "(id INTEGER NOT NULL REFERENCES datas(id) ON DELETE CASCADE, "
+               "timemark INTEGER NOT NULL, value REAL NOT NULL)");
+    query.prepare("INSERT INTO datas "
+                  "VALUES (NULL, :market, :product, :data, :dataid, :timestamp)");
+    query.bindValue(":market", market);
+    query.bindValue(":product", product);
+    query.bindValue(":data", table);
+    query.bindValue(":dataid", subTable);
+    query.bindValue(":timestamp", timestamp);
+    auto result = query.exec();
+    if(!result)
+    {
+        qDebug() << query.lastError().text();
+        return;
+    }
+    query.exec("SELECT last_insert_rowid();");
+    query.next();
+    auto id = query.value(0).toInt();
+    Q_ASSERT(id >= 1);
+
     if(data.size()<=17)
         return;
     quint8* cursor = (quint8*)data.data();
@@ -66,8 +89,8 @@ void decode(QByteArray &data, QSqlQuery &query, QString &table, int subId, int t
     if(!count)
         return;
 
-    query.prepare("INSERT INTO [" + table + "] VALUES "
-                  "(:market, :product, :subId, :timestamp, :data)");
+    query.prepare("INSERT INTO [t_" + table + "] VALUES "
+                  "(:id, :timestamp, :data)");
     for(int i=0;i<count;i++)
     {
         quint32 ttime = ntohl(*(int*)cursor);
@@ -79,12 +102,12 @@ void decode(QByteArray &data, QSqlQuery &query, QString &table, int subId, int t
         pvalue++;
         *pvalue = ntohl(*(int*)cursor);
         cursor+=4;
-        query.bindValue(":market", market);
-        query.bindValue(":product", product);
-        query.bindValue(":subId", subId);
+        query.bindValue(":id", id);
         query.bindValue(":timestamp", ttime);
         query.bindValue(":data", doubleValue);
-        query.exec();
+        result = query.exec();
+        if(!result)
+            qDebug() << query.lastError().text();
     }
 }
 
@@ -95,7 +118,6 @@ QString decode2(QByteArray &data)
     quint8* cursor = (quint8*)data.data();
     cursor++;
     quint32 blocks = ntohl(*(quint32*)cursor);
-    //Q_ASSERT(blocks==1);
     cursor+=4;
 
     quint32 datetime1 = *(quint32*)cursor;
@@ -157,11 +179,24 @@ void Widget::on_startButton_clicked()
         destDatabase.close();
         return;
     }
+    destDatabase.transaction();
+
+    QSqlQuery destQuery(destDatabase);
+    destQuery.exec("PRAGMA foreign_keys = ON;");
+    destQuery.exec("CREATE TABLE IF NOT EXISTS datas("
+                   "id INTEGER PRIMARY KEY, "
+                   "market TEXT NOT NULL, "
+                   "product TEXT NOT NULL, "
+                   "data TEXT NOT NULL, "
+                   "dataid TEXT NOT NULL, "
+                   "timestamp INTEGER NOT NULL);");
+    destQuery.exec("CREATE UNIQUE INDEX IF NOT EXISTS idatas ON datas("
+                   "market, product, data, dataid, timestamp);");
+    destQuery.exec("CREATE INDEX IF NOT EXISTS idatas_t ON datas(timestamp);");
+    destQuery.exec("DELETE FROM datas WHERE timestamp = 0;");
 
     QSqlQuery query(database);
     query.exec("SELECT * FROM t_stockly_double");
-    QSqlQuery destQuery(destDatabase);
-    destQuery.exec("BEGIN TRANSACTION");
 
     while(query.next())
     {
@@ -170,18 +205,19 @@ void Widget::on_startButton_clicked()
         auto value = query.value(1).toByteArray();
         Q_ASSERT(nameList.size()==5);
 
-        QString market = nameList.at(0).toLocal8Bit();
-        QString product = nameList.at(1).toLocal8Bit();
-        QString table = nameList.at(2).toLocal8Bit();
-        auto subTable = nameList.at(3).toInt();
-        auto ttime = nameList.at(4).toInt();
+        QString market      = nameList.at(0).toLocal8Bit();
+        QString product     = nameList.at(1).toLocal8Bit();
+        QString table       = nameList.at(2).toLocal8Bit();
+        QString subTable    = nameList.at(3).toLocal8Bit();
+        auto ttime          = nameList.at(4).toInt();
 
-        decode(value, destQuery, table, subTable, ttime, product, market);
+        decode(value, destQuery, market, product, table, subTable, ttime);
 
         ui->msg->append(name);
         qApp->processEvents();
     }
-    destQuery.exec("COMMIT TRANSACTION");
+    destDatabase.commit();
+    destDatabase.close();
 
 //    query.exec("SELECT * FROM t_stockly_vdouble");
 
