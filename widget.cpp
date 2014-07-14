@@ -52,7 +52,7 @@ void decode(QByteArray &data,
 {
     query.exec("CREATE TABLE IF NOT EXISTS [t_" + table + "]"
                "(id INTEGER NOT NULL REFERENCES datas(id) ON DELETE CASCADE, "
-               "timemark INTEGER NOT NULL, value REAL NOT NULL)");
+               "timestamp INTEGER NOT NULL, value REAL NOT NULL)");
     query.prepare("INSERT INTO datas "
                   "VALUES (NULL, :market, :product, :data, :dataid, :timestamp)");
     query.bindValue(":market", market);
