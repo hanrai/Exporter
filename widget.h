@@ -2,6 +2,7 @@
 #define WIDGET_H
 
 #include <QWidget>
+#include <QtSql>
 
 namespace Ui {
 class Widget;
@@ -22,6 +23,15 @@ public slots:
 
 private:
     Ui::Widget *ui;
+
+private:
+    QSqlDatabase database;
+    QSqlDatabase destDatabase;
+
+private:
+    bool OpenDatabase(QSqlDatabase &database, QString name, QString dbName);
+    void InitInfoTable(QSqlQuery &query);
+    void Decode(QSqlQuery &query, QSqlQuery &destQuery, int selector);
 };
 
 #endif // WIDGET_H

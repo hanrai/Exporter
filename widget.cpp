@@ -1,7 +1,7 @@
 #include "widget.h"
 #include "ui_widget.h"
 #include <QtGui>
-#include <QtSql>
+#include <QMessageBox>
 #include <QtEndian>
 #include <QFileDialog>
 
@@ -42,37 +42,16 @@ void Widget::on_targetButton_clicked()
     ui->targetFolder->setText(filename);
 }
 
-void decode(QByteArray &data,
-            QSqlQuery &query,
-            QString &market,
-            QString &product,
-            QString &table,
-            QString &subTable,
-            int timestamp)
+int decode(QByteArray &data,
+           QSqlQuery &query,
+           QString &table,
+           int id)
 {
-    query.exec("CREATE TABLE IF NOT EXISTS [t_" + table + "]"
-               "(id INTEGER NOT NULL REFERENCES datas(id) ON DELETE CASCADE, "
-               "timestamp INTEGER NOT NULL, value REAL NOT NULL)");
-    query.prepare("INSERT INTO datas "
-                  "VALUES (NULL, :market, :product, :data, :dataid, :timestamp)");
-    query.bindValue(":market", market);
-    query.bindValue(":product", product);
-    query.bindValue(":data", table);
-    query.bindValue(":dataid", subTable);
-    query.bindValue(":timestamp", timestamp);
-    auto result = query.exec();
-    if(!result)
-    {
-        qDebug() << query.lastError().text();
-        return;
-    }
-    query.exec("SELECT last_insert_rowid();");
-    query.next();
-    auto id = query.value(0).toInt();
-    Q_ASSERT(id >= 1);
 
-    if(data.size()<=17)
-        return;
+    int rowCount = 0;
+
+    if(data.size() <= 17)
+        return rowCount;
     quint8* cursor = (quint8*)data.data();
     cursor++;
     quint32 blocks = ntohl(*(quint32*)cursor);
@@ -87,7 +66,11 @@ void decode(QByteArray &data,
     cursor+=4;
 
     if(!count)
-        return;
+        return rowCount;
+
+    query.exec("CREATE TABLE IF NOT EXISTS [t_" + table + "]"
+               "(id INTEGER NOT NULL REFERENCES datas(id) ON DELETE CASCADE, "
+               "timestamp INTEGER NOT NULL, value1 REAL NOT NULL)");
 
     query.prepare("INSERT INTO [t_" + table + "] VALUES "
                   "(:id, :timestamp, :data)");
@@ -105,16 +88,22 @@ void decode(QByteArray &data,
         query.bindValue(":id", id);
         query.bindValue(":timestamp", ttime);
         query.bindValue(":data", doubleValue);
-        result = query.exec();
+        bool result = query.exec();
         if(!result)
             qDebug() << query.lastError().text();
+        rowCount = i;
     }
+    return rowCount;
 }
 
-QString decode2(QByteArray &data)
+int decode2(QByteArray &data,
+            QSqlQuery &query,
+            QString &table,
+            int id)
 {
+    int rowCount = 0;
     if(data.size()<=17)
-        return QString();
+        return rowCount;
     quint8* cursor = (quint8*)data.data();
     cursor++;
     quint32 blocks = ntohl(*(quint32*)cursor);
@@ -129,33 +118,58 @@ QString decode2(QByteArray &data)
     cursor+=4;
 
     if(!count)
-        return QString();
+        return rowCount;
 
-    QString result;
+    auto cloneCursor = cursor;
+    cloneCursor += 4;
+    auto colCount = ntohl(*(quint32*)cloneCursor);
+
+    QString queryString = "CREATE TABLE IF NOT EXISTS [t_" + table + "]"
+            "(id INTEGER NOT NULL REFERENCES datas(id) ON DELETE CASCADE, "
+            "timestamp INTEGER NOT NULL";
+    for(int i=0; i<colCount; i++)
+        queryString += QString(", value%1 REAL NOT NULL").arg(i+1);
+    queryString += ");";
+    query.exec(queryString);
+
+    queryString = "INSERT INTO [t_" + table + "] VALUES "
+            "(:id, :timestamp";
+    for(int i=0; i<colCount; i++)
+        queryString += QString(", :data%1").arg(i+1);
+    queryString += ");";
+
+    query.prepare(queryString);
     for(int i=0;i<count;i++)
     {
         quint32 ttime = ntohl(*(quint32*)cursor);
-        auto time = QDateTime::fromTime_t(ttime);
-        auto timePart = time.toLocalTime().toString("yyyy-MM-dd hh:mm:ss");
-        result += timePart;
         cursor+=4;
 
         quint32 countv = ntohl(*(quint32*)cursor);
+        if(countv != colCount)
+        {
+            query.exec("DROP TABLE [t_" + table + "]");
+            rowCount = -1;
+            break;
+        }
         cursor+=4;
 
+        query.bindValue(":id", id);
+        query.bindValue(":timestamp", ttime);
         for(int i=0;i<countv;i++)
         {
-            result += ",";
             double doubleValue;
             *((quint32*)&doubleValue)=ntohl(*(quint32*)cursor);
             cursor+=4;
             *((quint32*)&doubleValue+1)=ntohl(*(quint32*)cursor);
             cursor+=4;
-            result += QString::number(doubleValue,'f',6);
+            query.bindValue(QString(":data%1").arg(i+1), doubleValue);
         }
-        result += "\n";
+        bool result = query.exec();
+        if(!result)
+            qDebug() << query.lastError().text();
+        rowCount = i;
     }
-    return result;
+    return rowCount;
 }
 
 void Widget::on_startButton_clicked()
@@ -165,39 +179,68 @@ void Widget::on_startButton_clicked()
     if(ui->targetFolder->text().isEmpty())
         return;
 
-    QSqlDatabase database = QSqlDatabase::addDatabase("QSQLITE", "src");
-    database.setDatabaseName(ui->dataFile->text());
-    if(!database.open())
+    if(!OpenDatabase(database, "src", ui->dataFile->text()))
+        return;
+    if(!OpenDatabase(destDatabase, "dest", ui->targetFolder->text()))
     {
         database.close();
-        return;
-    }
-    QSqlDatabase destDatabase = QSqlDatabase::addDatabase("QSQLITE", "dest");
-    destDatabase.setDatabaseName(ui->targetFolder->text());
-    if(!destDatabase.open())
-    {
-        destDatabase.close();
         return;
     }
     destDatabase.transaction();
 
     QSqlQuery destQuery(destDatabase);
-    destQuery.exec("PRAGMA foreign_keys = ON;");
-    destQuery.exec("CREATE TABLE IF NOT EXISTS datas("
-                   "id INTEGER PRIMARY KEY, "
-                   "market TEXT NOT NULL, "
-                   "product TEXT NOT NULL, "
-                   "data TEXT NOT NULL, "
-                   "dataid TEXT NOT NULL, "
-                   "timestamp INTEGER NOT NULL);");
-    destQuery.exec("CREATE UNIQUE INDEX IF NOT EXISTS idatas ON datas("
-                   "market, product, data, dataid, timestamp);");
-    destQuery.exec("CREATE INDEX IF NOT EXISTS idatas_t ON datas(timestamp);");
-    destQuery.exec("DELETE FROM datas WHERE timestamp = 0;");
+    InitInfoTable(destQuery);
 
     QSqlQuery query(database);
     query.exec("SELECT * FROM t_stockly_double");
+    Decode(query, destQuery, 1);
 
+    query.exec("SELECT * FROM t_stockly_vdouble");
+    Decode(query, destQuery, 2);
+
+    destDatabase.commit();
+    destDatabase.close();
+    database.close();
+
+    qDebug()<<"Done!";
+    ui->msg->append("Done!");
+}
+
+bool Widget::OpenDatabase(QSqlDatabase &database, QString name, QString dbName)
+{
+    bool result = true;
+    database = QSqlDatabase::addDatabase("QSQLITE", name);
+    database.setDatabaseName(dbName);
+    if(!database.open())
+    {
+        result = false;
+        QMessageBox msgBox;
+        msgBox.setText("Open Database Error:" + database.lastError().text());
+        msgBox.exec();
+    }
+    return result;
+}
+
+void Widget::InitInfoTable(QSqlQuery &query)
+{
+    query.exec("PRAGMA foreign_keys = ON;");
+    query.exec("CREATE TABLE IF NOT EXISTS datas("
+               "id INTEGER PRIMARY KEY, "
+               "market TEXT NOT NULL, "
+               "product TEXT NOT NULL, "
+               "data TEXT NOT NULL, "
+               "dataid TEXT NOT NULL, "
+               "timestamp INTEGER NOT NULL,"
+               "datacount INTEGER DEFAULT 0);");
+    query.exec("CREATE UNIQUE INDEX IF NOT EXISTS idatas ON datas("
+               "market, product, data, dataid, timestamp);");
+    query.exec("CREATE INDEX IF NOT EXISTS idatas_t ON datas(timestamp);");
+    query.exec("CREATE INDEX IF NOT EXISTS idatas_count ON datas(datacount);");
+    query.exec("DELETE FROM datas WHERE timestamp = 0;");
+}
+
+void Widget::Decode(QSqlQuery &query, QSqlQuery &destQuery, int selector)
+{
     while(query.next())
     {
         auto name = query.value(0).toString();
@@ -211,55 +254,45 @@ void Widget::on_startButton_clicked()
         QString subTable    = nameList.at(3).toLocal8Bit();
         auto ttime          = nameList.at(4).toInt();
 
-        decode(value, destQuery, market, product, table, subTable, ttime);
+        destQuery.prepare("INSERT INTO datas "
+                      "VALUES (NULL, :market, :product, :data, :dataid, :timestamp, 0)");
+        destQuery.bindValue(":market", market);
+        destQuery.bindValue(":product", product);
+        destQuery.bindValue(":data", table);
+        destQuery.bindValue(":dataid", subTable);
+        destQuery.bindValue(":timestamp", ttime);
+        auto result = destQuery.exec();
+        if(!result)
+        {
+            qDebug() << destQuery.lastError().text();
+            ui->msg->append(QString("%1:%2").arg(selector).arg(name));
+            qApp->processEvents();
+            continue;
+        }
+        destQuery.exec("SELECT last_insert_rowid();");
+        destQuery.next();
+        auto id = destQuery.value(0).toInt();
+        Q_ASSERT(id >= 1);
 
-        ui->msg->append(name);
+        int rowCount = 0;
+        switch(selector)
+        {
+        case 1:
+            rowCount = decode(value, destQuery, table, id);
+            break;
+        case 2:
+            rowCount = decode2(value, destQuery, table, id);
+            break;
+        default:
+            break;
+        }
+
+        destQuery.prepare("UPDATE datas SET datacoutn = :rowCount WHERE id = :id");
+        destQuery.bindValue(":rowCount", rowCount);
+        destQuery.bindValue(":id", id);
+        destQuery.exec();
+
+        ui->msg->append(QString("%1:%2:%3").arg(selector).arg(name).arg(rowCount));
         qApp->processEvents();
     }
-    destDatabase.commit();
-    destDatabase.close();
-
-//    query.exec("SELECT * FROM t_stockly_vdouble");
-
-//    while(query.next())
-//    {
-//        auto name = query.value(0).toString();
-//        auto value = query.value(1).toByteArray();
-//        auto nameList = name.split("-");
-//        Q_ASSERT(nameList.size()==5);
-
-//        auto ttime = nameList.at(4).toInt();
-//        auto time = QDateTime::fromTime_t(ttime);
-//        auto timePart = time.toLocalTime().toString("yyyyMMdd");
-//        QString filename =
-//                ui->targetFolder->text()+"/"+
-//                timePart+"-"+
-//                nameList.at(1)+"-"+
-//                nameList.at(2)+"-"+
-//                nameList.at(3)+".csv";
-//        QFile file(filename);
-//        if(file.exists())
-//            continue;
-
-//        auto decoded = decode2(value);
-
-//        if(decoded.isEmpty())
-//            continue;
-
-//        bool success;
-//        success=file.open(QIODevice::WriteOnly|QIODevice::Text);
-//        if(!success)
-//        {
-//            QString reason = file.errorString();
-//            ui->msg->append(reason);
-//            ui->msg->append(filename);
-//            return;
-//        }
-//        file.write(decoded.toLocal8Bit());
-//        file.close();
-//        ui->msg->append(filename);
-//        qApp->processEvents();
-//    }
-    qDebug()<<"Done!";
-    ui->msg->append("Done!");
 }
