@@ -68,11 +68,12 @@ int decode(QByteArray &data,
     if(!count)
         return rowCount;
 
-    query.exec("CREATE TABLE IF NOT EXISTS [t_" + table + "]"
+    query.exec("CREATE TABLE IF NOT EXISTS t_" + table + ""
                "(id INTEGER NOT NULL REFERENCES datas(id) ON DELETE CASCADE, "
                "timestamp INTEGER NOT NULL, value1 REAL NOT NULL)");
+    query.exec("CREATE INDEX IF NOT EXISTS iid_" + table + " ON t_" + table + "(id);");
 
-    query.prepare("INSERT INTO [t_" + table + "] VALUES "
+    query.prepare("INSERT INTO t_" + table + " VALUES "
                   "(:id, :timestamp, :data)");
     for(int i=0;i<count;i++)
     {
@@ -124,15 +125,16 @@ int decode2(QByteArray &data,
     cloneCursor += 4;
     auto colCount = ntohl(*(quint32*)cloneCursor);
 
-    QString queryString = "CREATE TABLE IF NOT EXISTS [t_" + table + "]"
+    QString queryString = "CREATE TABLE IF NOT EXISTS t_" + table + ""
             "(id INTEGER NOT NULL REFERENCES datas(id) ON DELETE CASCADE, "
             "timestamp INTEGER NOT NULL";
     for(int i=0; i<colCount; i++)
         queryString += QString(", value%1 REAL NOT NULL").arg(i+1);
     queryString += ");";
     query.exec(queryString);
+    query.exec("CREATE INDEX IF NOT EXISTS iid_" + table + " ON t_" + table + "(id);");
 
-    queryString = "INSERT INTO [t_" + table + "] VALUES "
+    queryString = "INSERT INTO t_" + table + " VALUES "
             "(:id, :timestamp";
     for(int i=0; i<colCount; i++)
         queryString += QString(", :data%1").arg(i+1);
@@ -147,7 +149,7 @@ int decode2(QByteArray &data,
         quint32 countv = ntohl(*(quint32*)cursor);
         if(countv != colCount)
         {
-            query.exec("DROP TABLE [t_" + table + "]");
+            query.exec("DROP TABLE t_" + table + "");
             rowCount = -1;
             break;
         }
@@ -186,9 +188,10 @@ void Widget::on_startButton_clicked()
         database.close();
         return;
     }
+    QSqlQuery destQuery(destDatabase);
+    destQuery.exec("PRAGMA foreign_keys = 1");
     destDatabase.transaction();
 
-    QSqlQuery destQuery(destDatabase);
     InitInfoTable(destQuery);
 
     QSqlQuery query(database);
@@ -223,7 +226,6 @@ bool Widget::OpenDatabase(QSqlDatabase &database, QString name, QString dbName)
 
 void Widget::InitInfoTable(QSqlQuery &query)
 {
-    query.exec("PRAGMA foreign_keys = ON;");
     query.exec("CREATE TABLE IF NOT EXISTS datas("
                "id INTEGER PRIMARY KEY, "
                "market TEXT NOT NULL, "
@@ -287,7 +289,7 @@ void Widget::Decode(QSqlQuery &query, QSqlQuery &destQuery, int selector)
             break;
         }
 
-        destQuery.prepare("UPDATE datas SET datacoutn = :rowCount WHERE id = :id");
+        destQuery.prepare("UPDATE datas SET datacount = :rowCount WHERE id = :id");
         destQuery.bindValue(":rowCount", rowCount);
         destQuery.bindValue(":id", id);
         destQuery.exec();
