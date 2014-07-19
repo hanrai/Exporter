@@ -10,6 +10,12 @@ Widget::Widget(QWidget *parent) :
     ui(new Ui::Widget)
 {
     ui->setupUi(this);
+    QCoreApplication::setOrganizationName("hanrai");
+    QCoreApplication::setOrganizationDomain("hanrai.com");
+    QCoreApplication::setApplicationName("Exporter");
+    QSettings settings;
+    ui->dataFile->setText(settings.value("filenames/src", QString()).toString());
+    ui->targetFolder->setText(settings.value("filenames/dest", QString()).toString());
 }
 
 Widget::~Widget()
@@ -19,27 +25,35 @@ Widget::~Widget()
 
 void Widget::on_dataFileButton_clicked()
 {
+    QString path = "E:/";
+    if(!ui->dataFile->text().isEmpty())
+        path = QDir(ui->dataFile->text()).absolutePath();
     QString filename = QFileDialog::getOpenFileName(this,
                                                     tr("Open Data File"),
-                                                    "E:/",
+                                                    path,
                                                     tr("Data File(data.dat)"));
     if(filename.isEmpty())
         return;
     ui->dataFile->setText(filename);
+    QSettings settings;
+    settings.setValue("filenames/src", filename);
 }
 
 void Widget::on_targetButton_clicked()
 {
+    QString path = "E:/";
+    if(!ui->targetFolder->text().isEmpty())
+        path = QDir(ui->targetFolder->text()).absolutePath();
     QString filename = QFileDialog::getSaveFileName(
                 this,
                 tr("Export to..."),
-                "E:/Data",
+                path,
                 tr("SQLite (*.sqlite)"));
-
     if(filename.isEmpty())
         return;
-
     ui->targetFolder->setText(filename);
+    QSettings settings;
+    settings.setValue("filenames/dest", filename);
 }
 
 int decode(QByteArray &data,
@@ -195,6 +209,7 @@ void Widget::on_startButton_clicked()
     InitInfoTable(destQuery);
 
     QSqlQuery query(database);
+    query.setForwardOnly(true);
     query.exec("SELECT * FROM t_stockly_double");
     Decode(query, destQuery, 1);
 
@@ -271,9 +286,7 @@ void Widget::Decode(QSqlQuery &query, QSqlQuery &destQuery, int selector)
             qApp->processEvents();
             continue;
         }
-        destQuery.exec("SELECT last_insert_rowid();");
-        destQuery.next();
-        auto id = destQuery.value(0).toInt();
+        auto id = destQuery.lastInsertId().toInt();
         Q_ASSERT(id >= 1);
 
         int rowCount = 0;
@@ -296,5 +309,8 @@ void Widget::Decode(QSqlQuery &query, QSqlQuery &destQuery, int selector)
 
         ui->msg->append(QString("%1:%2:%3").arg(selector).arg(name).arg(rowCount));
         qApp->processEvents();
+
+        destQuery.finish();
+        destQuery.clear();
     }
 }
