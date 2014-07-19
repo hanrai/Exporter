@@ -204,6 +204,7 @@ void Widget::on_startButton_clicked()
     }
     QSqlQuery destQuery(destDatabase);
     destQuery.exec("PRAGMA foreign_keys = 1");
+    destQuery.setForwardOnly(true);
     destDatabase.transaction();
 
     InitInfoTable(destQuery);
@@ -309,8 +310,5 @@ void Widget::Decode(QSqlQuery &query, QSqlQuery &destQuery, int selector)
 
         ui->msg->append(QString("%1:%2:%3").arg(selector).arg(name).arg(rowCount));
         qApp->processEvents();
-
-        destQuery.finish();
-        destQuery.clear();
     }
 }
