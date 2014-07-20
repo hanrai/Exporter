@@ -34,4 +34,18 @@ private:
     void Decode(QSqlQuery &query, QSqlQuery &destQuery, int selector);
 };
 
+#pragma pack(1)
+struct Header
+{
+    char bitOrder;
+    int blocks;
+    int datetime1;
+    int datetime2;
+    int count;
+    int data;
+};
+#pragma pack()
+
+void DecodeHeader(struct Header *header);
+
 #endif // WIDGET_H

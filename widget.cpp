@@ -61,26 +61,15 @@ int decode(QByteArray &data,
            QString &table,
            int id)
 {
-
-    int rowCount = 0;
-
     if(data.size() <= 17)
-        return rowCount;
-    quint8* cursor = (quint8*)data.data();
-    cursor++;
-    quint32 blocks = ntohl(*(quint32*)cursor);
-    cursor+=4;
+        return 0;
+    Header *header = (Header*)data.data();
+    DecodeHeader(header);
 
-    quint32 datetime1 = *(quint32*)cursor;
-    cursor+=4;
-    quint32 datetime2 = *(quint32*)cursor;
-    cursor+=4;
-
-    auto count = ntohl(*(int*)cursor);
-    cursor+=4;
-
+    quint8 *cursor = (quint8*)&header->data;
+    auto count = header->count;
     if(!count)
-        return rowCount;
+        return count;
 
     query.exec("CREATE TABLE IF NOT EXISTS t_" + table + ""
                "(id INTEGER NOT NULL REFERENCES datas(id) ON DELETE CASCADE, "
@@ -103,12 +92,9 @@ int decode(QByteArray &data,
         query.bindValue(":id", id);
         query.bindValue(":timestamp", ttime);
         query.bindValue(":data", doubleValue);
-        bool result = query.exec();
-        if(!result)
-            qDebug() << query.lastError().text();
-        rowCount = i;
+        Q_ASSERT(query.exec());
     }
-    return rowCount;
+    return count;
 }
 
 int decode2(QByteArray &data,
@@ -116,24 +102,16 @@ int decode2(QByteArray &data,
             QString &table,
             int id)
 {
-    int rowCount = 0;
     if(data.size()<=17)
-        return rowCount;
-    quint8* cursor = (quint8*)data.data();
-    cursor++;
-    quint32 blocks = ntohl(*(quint32*)cursor);
-    cursor+=4;
+        return 0;
+    Header *header = (Header*)data.data();
+    DecodeHeader(header);
 
-    quint32 datetime1 = *(quint32*)cursor;
-    cursor+=4;
-    quint32 datetime2 = *(quint32*)cursor;
-    cursor+=4;
-
-    auto count = ntohl(*(int*)cursor);
-    cursor+=4;
+    quint8 *cursor = (quint8*)&header->data;
+    auto count = header->count;
 
     if(!count)
-        return rowCount;
+        return count;
 
     auto cloneCursor = cursor;
     cloneCursor += 4;
@@ -164,8 +142,7 @@ int decode2(QByteArray &data,
         if(countv != colCount)
         {
             query.exec("DROP TABLE t_" + table + "");
-            rowCount = -1;
-            break;
+            return -1;
         }
         cursor+=4;
 
@@ -180,12 +157,9 @@ int decode2(QByteArray &data,
             cursor+=4;
             query.bindValue(QString(":data%1").arg(i+1), doubleValue);
         }
-        bool result = query.exec();
-        if(!result)
-            qDebug() << query.lastError().text();
-        rowCount = i;
+        Q_ASSERT(query.exec());
     }
-    return rowCount;
+    return count;
 }
 
 void Widget::on_startButton_clicked()
@@ -311,4 +285,10 @@ void Widget::Decode(QSqlQuery &query, QSqlQuery &destQuery, int selector)
         ui->msg->append(QString("%1:%2:%3").arg(selector).arg(name).arg(rowCount));
         qApp->processEvents();
     }
+}
+
+void DecodeHeader(struct Header *header)
+{
+    header->blocks = ntohl(*(int*)&header->blocks);
+    header->count = ntohl(*(int*)&header->count);
 }
