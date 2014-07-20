@@ -66,7 +66,6 @@ int decode(QByteArray &data,
     Header *header = (Header*)data.data();
     DecodeHeader(header);
 
-    quint8 *cursor = (quint8*)&header->data;
     auto count = header->count;
     if(!count)
         return count;
@@ -78,6 +77,8 @@ int decode(QByteArray &data,
 
     query.prepare("INSERT INTO t_" + table + " VALUES "
                   "(:id, :timestamp, :data)");
+
+    quint8 *cursor = (quint8*)&header->data;
     for(int i=0;i<count;i++)
     {
         quint32 ttime = ntohl(*(int*)cursor);
@@ -92,7 +93,8 @@ int decode(QByteArray &data,
         query.bindValue(":id", id);
         query.bindValue(":timestamp", ttime);
         query.bindValue(":data", doubleValue);
-        Q_ASSERT(query.exec());
+        if(!query.exec())
+            qDebug()<<query.lastError().text();
     }
     return count;
 }
@@ -107,12 +109,11 @@ int decode2(QByteArray &data,
     Header *header = (Header*)data.data();
     DecodeHeader(header);
 
-    quint8 *cursor = (quint8*)&header->data;
     auto count = header->count;
-
     if(!count)
         return count;
 
+    quint8 *cursor = (quint8*)&header->data;
     auto cloneCursor = cursor;
     cloneCursor += 4;
     auto colCount = ntohl(*(quint32*)cloneCursor);
@@ -157,7 +158,8 @@ int decode2(QByteArray &data,
             cursor+=4;
             query.bindValue(QString(":data%1").arg(i+1), doubleValue);
         }
-        Q_ASSERT(query.exec());
+        if(!query.exec())
+            qDebug()<<query.lastError().text();
     }
     return count;
 }
